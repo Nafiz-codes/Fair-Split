@@ -28,8 +28,8 @@ export function SettlementButton({ groupId, fromId, toId, amount }: Props) {
   }
 
   if (result) {
-    return <span className={`rounded-lg px-3 py-2 text-sm font-medium ${result.success ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-700"}`}>{result.message}</span>;
+    return <span className={`stamp font-receipt max-w-[150px] break-all px-2 py-1 text-[9px] ${result.success ? "text-[var(--sage)]" : "text-[var(--rust)]"}`}>{result.message}</span>;
   }
 
-  return <button className="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-wait disabled:bg-indigo-400" disabled={isPending} onClick={recordSettlement} type="button">{isPending ? "Processing transfer…" : "Record Settlement"}</button>;
+  return <button className="border border-[var(--ink)] px-3 py-2 text-xs font-semibold text-[var(--ink)] transition hover:border-[var(--brass)] hover:bg-[var(--brass)] hover:text-white disabled:cursor-wait disabled:opacity-60" disabled={isPending} onClick={recordSettlement} type="button">{isPending ? "Processing…" : "Record"}</button>;
 }
