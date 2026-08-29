@@ -12,6 +12,9 @@ import { computeBalances, simplifyDebts } from "@/lib/balances";
 import { RemoveMemberButton } from "./remove-member-button";
 import { SettlementButton } from "./settlement-button";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 const inputClass = "mt-2 w-full border-b border-[var(--border)] bg-transparent px-0 py-2.5 text-sm outline-none placeholder:text-[var(--slate)] focus:border-[var(--brass)]";
 const chartColors = ["var(--brass)", "var(--sage)", "var(--rust)", "var(--ink)"];
 

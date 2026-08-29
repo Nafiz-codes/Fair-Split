@@ -22,6 +22,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-v
 .ticket-divider { border-left: 1px dashed var(--border); }
 .stamp { transform: rotate(-8deg); border: 2px dashed currentColor; letter-spacing: .08em; text-transform: uppercase; }
 .settled-stamp { color: var(--sage); font-weight: 700; line-height: 1.15; }
+.settlement-error { color: var(--rust); background: color-mix(in srgb, var(--rust) 7%, var(--paper-raised)); border: 1px solid color-mix(in srgb, var(--rust) 45%, var(--border)); }
 .ledger-list-item { animation: ledger-rise .42s ease both; }
 @keyframes ledger-rise { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: translateY(0); } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; } }

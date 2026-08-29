@@ -44,7 +44,20 @@ export function SettlementButton({ groupId, fromId, toId, amount }: Props) {
   }
 
   if (result) {
-    return <span className={`stamp font-receipt max-w-[150px] break-all px-2 py-1 text-[9px] ${result.success ? "text-[var(--sage)]" : "text-[var(--rust)]"}`}>{result.message}</span>;
+    if (result.success) {
+      return (
+        <span className="stamp font-receipt max-w-[150px] break-all px-2 py-1 text-[9px] text-[var(--sage)]">
+          {result.message}
+        </span>
+      );
+    }
+
+    return (
+      <p className="settlement-error max-w-[190px] px-3 py-2 text-xs leading-5" role="alert">
+        <span className="block font-semibold">Stripe transfer failed</span>
+        <span className="mt-1 block">{result.message}</span>
+      </p>
+    );
   }
 
   return <button className="border border-[var(--ink)] px-3 py-2 text-xs font-semibold text-[var(--ink)] transition hover:border-[var(--brass)] hover:bg-[var(--brass)] hover:text-white disabled:cursor-wait disabled:opacity-60" disabled={isPending || hasStarted} onClick={recordSettlement} type="button">{isPending || hasStarted ? "Processing…" : "Record"}</button>;
