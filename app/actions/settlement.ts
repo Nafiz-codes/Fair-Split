@@ -44,6 +44,7 @@ export async function executeSettlement(
       amount: Math.round(amount * 100),
       currency: "usd",
       destination: recipient.stripeAccountId,
+      source_type: "card",
       metadata: { settlementId, fromMemberId, toMemberId },
     });
 
