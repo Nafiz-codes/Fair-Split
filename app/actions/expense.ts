@@ -34,27 +34,36 @@ export async function addExpense(
     createdAt: new Date().toISOString(),
   };
 
-  const insertExpense = db.prepare('INSERT INTO "Expense" (id, groupId, paidByMemberId, amount, description, createdAt) VALUES (?, ?, ?, ?, ?, ?)');
-  const insertSplit = db.prepare('INSERT INTO "ExpenseSplit" (id, expenseId, memberId) VALUES (?, ?, ?)');
-
-  db.transaction(() => {
-    insertExpense.run(expense.id, expense.groupId, expense.paidByMemberId, expense.amount, expense.description, expense.createdAt);
-    for (const memberId of splitBetweenMemberIds) insertSplit.run(randomUUID(), expense.id, memberId);
+  await db.transaction(async () => {
+    await db
+      .prepare('INSERT INTO "Expense" (id, groupId, paidByMemberId, amount, description, createdAt) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(expense.id, expense.groupId, expense.paidByMemberId, expense.amount, expense.description, expense.createdAt);
+    for (const memberId of splitBetweenMemberIds) {
+      await db.prepare('INSERT INTO "ExpenseSplit" (id, expenseId, memberId) VALUES (?, ?, ?)').run(randomUUID(), expense.id, memberId);
+    }
   })();
 
   return expense;
 }
 
 export async function getExpenses(groupId: string): Promise<ExpenseWithDetails[]> {
-  const expenses = db.prepare(`
+  const expenses = (await db.prepare(`
     SELECT e.id, e.groupId, e.paidByMemberId, e.amount, e.description, e.createdAt, m.name AS paidByName
     FROM "Expense" e JOIN "Member" m ON m.id = e.paidByMemberId
     WHERE e.groupId = ? ORDER BY e.createdAt DESC
-  `).all(groupId) as (Expense & { paidByName: string })[];
-  const splits = db.prepare(`
-    SELECT es.expenseId, m.id, m.name FROM "ExpenseSplit" es JOIN "Member" m ON m.id = es.memberId
-    WHERE es.expenseId = ? ORDER BY m.name
-  `);
+  `).all(groupId)) as (Expense & { paidByName: string })[];
 
-  return expenses.map((expense) => ({ ...expense, splitBetween: splits.all(expense.id) as { id: string; name: string }[] }));
+  return Promise.all(
+    expenses.map(async (expense) => {
+      const splitBetween = (await db.prepare(`
+        SELECT es.expenseId, m.id, m.name FROM "ExpenseSplit" es JOIN "Member" m ON m.id = es.memberId
+        WHERE es.expenseId = ? ORDER BY m.name
+      `).all(expense.id)) as { id: string; name: string }[];
+
+      return {
+        ...expense,
+        splitBetween,
+      };
+    })
+  );
 }
