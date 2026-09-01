@@ -1,12 +1,19 @@
-import Database from "better-sqlite3";
+import { createClient, type Client } from "@libsql/client";
 import fs from "node:fs";
 import path from "node:path";
-
 import os from "node:os";
 
-function resolveDatabasePath(): string {
+declare global {
+  // eslint-disable-next-line no-var
+  var libsqlClient: Client | undefined;
+}
+
+function resolveLibsqlUrl(): string {
+  if (process.env.TURSO_DATABASE_URL) {
+    return process.env.TURSO_DATABASE_URL;
+  }
   if (process.env.DATABASE_PATH) {
-    return process.env.DATABASE_PATH;
+    return `file:${process.env.DATABASE_PATH}`;
   }
 
   const defaultDir = path.join(process.cwd(), "data");
@@ -16,37 +23,45 @@ function resolveDatabasePath(): string {
     if (!fs.existsSync(defaultDir)) {
       fs.mkdirSync(defaultDir, { recursive: true });
     }
-    // Test write access to directory
     const testFile = path.join(defaultDir, `.write-test-${Date.now()}`);
     fs.writeFileSync(testFile, "");
     fs.unlinkSync(testFile);
-    return defaultPath;
+    return `file:${defaultPath}`;
   } catch {
     const tmpDir = path.join(os.tmpdir(), "fair-split");
     if (!fs.existsSync(tmpDir)) {
       fs.mkdirSync(tmpDir, { recursive: true });
     }
-    return path.join(tmpDir, "app.db");
+    return `file:${path.join(tmpDir, "app.db")}`;
   }
 }
 
-const databasePath = resolveDatabasePath();
+const clientUrl = resolveLibsqlUrl();
+const authToken = process.env.TURSO_AUTH_TOKEN;
 
-declare global {
-  // eslint-disable-next-line no-var
-  var sqliteDb: Database.Database | undefined;
+export const rawClient: Client =
+  global.libsqlClient ??
+  createClient({
+    url: clientUrl,
+    authToken: authToken,
+  });
+
+if (process.env.NODE_ENV !== "production") {
+  global.libsqlClient = rawClient;
 }
 
-function initializeSchema(database: Database.Database) {
-  database.exec(`
-    PRAGMA foreign_keys = ON;
+export async function initializeSchema(client: Client = rawClient) {
+  await client.execute("PRAGMA foreign_keys = ON;");
 
+  await client.execute(`
     CREATE TABLE IF NOT EXISTS "Group" (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       createdAt TEXT NOT NULL
     );
+  `);
 
+  await client.execute(`
     CREATE TABLE IF NOT EXISTS "Member" (
       id TEXT PRIMARY KEY,
       groupId TEXT NOT NULL,
@@ -54,7 +69,9 @@ function initializeSchema(database: Database.Database) {
       stripeAccountId TEXT,
       FOREIGN KEY (groupId) REFERENCES "Group"(id)
     );
+  `);
 
+  await client.execute(`
     CREATE TABLE IF NOT EXISTS "Expense" (
       id TEXT PRIMARY KEY,
       groupId TEXT NOT NULL,
@@ -65,7 +82,9 @@ function initializeSchema(database: Database.Database) {
       FOREIGN KEY (groupId) REFERENCES "Group"(id),
       FOREIGN KEY (paidByMemberId) REFERENCES "Member"(id)
     );
+  `);
 
+  await client.execute(`
     CREATE TABLE IF NOT EXISTS "ExpenseSplit" (
       id TEXT PRIMARY KEY,
       expenseId TEXT NOT NULL,
@@ -73,7 +92,9 @@ function initializeSchema(database: Database.Database) {
       FOREIGN KEY (expenseId) REFERENCES "Expense"(id),
       FOREIGN KEY (memberId) REFERENCES "Member"(id)
     );
+  `);
 
+  await client.execute(`
     CREATE TABLE IF NOT EXISTS "Settlement" (
       id TEXT PRIMARY KEY,
       groupId TEXT NOT NULL,
@@ -90,18 +111,49 @@ function initializeSchema(database: Database.Database) {
   `);
 }
 
-function createDatabase() {
-  fs.mkdirSync(path.dirname(databasePath), { recursive: true });
-  const database = new Database(databasePath);
-  initializeSchema(database);
-  return database;
+let schemaInitPromise: Promise<void> | null = null;
+export async function ensureDbInitialized() {
+  if (!schemaInitPromise) {
+    schemaInitPromise = initializeSchema(rawClient);
+  }
+  await schemaInitPromise;
 }
 
-export const db = global.sqliteDb ?? createDatabase();
+export const db = {
+  prepare(sql: string) {
+    return {
+      async run(...args: any[]): Promise<{ changes: number }> {
+        await ensureDbInitialized();
+        const res = await rawClient.execute({ sql, args });
+        return { changes: Number(res.rowsAffected) };
+      },
+      async get<T = any>(...args: any[]): Promise<T | undefined> {
+        await ensureDbInitialized();
+        const res = await rawClient.execute({ sql, args });
+        if (!res.rows || res.rows.length === 0) return undefined;
+        return { ...res.rows[0] } as unknown as T;
+      },
+      async all<T = any>(...args: any[]): Promise<T[]> {
+        await ensureDbInitialized();
+        const res = await rawClient.execute({ sql, args });
+        return res.rows.map((row) => ({ ...row })) as unknown as T[];
+      },
+    };
+  },
+  transaction(fn: (...args: any[]) => Promise<any> | any) {
+    return async (...args: any[]) => {
+      await ensureDbInitialized();
+      const tx = await rawClient.transaction("write");
+      try {
+        const result = await fn(...args);
+        await tx.commit();
+        return result;
+      } catch (err) {
+        await tx.rollback();
+        throw err;
+      }
+    };
+  },
+};
 
-if (process.env.NODE_ENV !== "production") {
-  global.sqliteDb = db;
-}
-
-export { initializeSchema };
 export default db;

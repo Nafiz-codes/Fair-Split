@@ -20,14 +20,20 @@ const expenseSeeds = [
   { description: "Museum tickets", amount: 40, paidBy: "Alice", splitBetween: ["Alice", "Charlie"] },
 ];
 
-function printDemoSummary(group: Group) {
-  const members = db.prepare('SELECT id, groupId, name, stripeAccountId FROM "Member" WHERE groupId = ? ORDER BY name').all(group.id) as Member[];
-  const expenses = db.prepare('SELECT id, groupId, paidByMemberId, amount, description, createdAt FROM "Expense" WHERE groupId = ? ORDER BY createdAt').all(group.id) as Expense[];
-  const getSplits = db.prepare('SELECT memberId FROM "ExpenseSplit" WHERE expenseId = ?');
-  const balances = computeBalances(members, expenses.map((expense) => ({
-    ...expense,
-    splitBetween: (getSplits.all(expense.id) as { memberId: string }[]).map((split) => split.memberId),
-  })));
+async function printDemoSummary(group: Group) {
+  const members = await db.prepare('SELECT id, groupId, name, stripeAccountId FROM "Member" WHERE groupId = ? ORDER BY name').all<Member>(group.id);
+  const expenses = await db.prepare('SELECT id, groupId, paidByMemberId, amount, description, createdAt FROM "Expense" WHERE groupId = ? ORDER BY createdAt').all<Expense>(group.id);
+
+  const formattedExpenses: (Expense & { splitBetween: string[] })[] = [];
+  for (const expense of expenses) {
+    const splits = await db.prepare('SELECT memberId FROM "ExpenseSplit" WHERE expenseId = ?').all<{ memberId: string }>(expense.id);
+    formattedExpenses.push({
+      ...expense,
+      splitBetween: splits.map((split) => split.memberId),
+    });
+  }
+
+  const balances = computeBalances(members, formattedExpenses);
 
   console.log(`Group ID: ${group.id}`);
   console.log(`Open: http://localhost:3000/group/${group.id}`);
@@ -39,41 +45,40 @@ function printDemoSummary(group: Group) {
   }
 }
 
-const existingGroup = db.prepare('SELECT id, name, createdAt FROM "Group" WHERE name = ?').get(groupName) as Group | undefined;
+async function main() {
+  const existingGroup = await db.prepare('SELECT id, name, createdAt FROM "Group" WHERE name = ?').get<Group>(groupName);
 
-if (existingGroup) {
-  console.log(`A demo group named "${groupName}" already exists; skipping creation.`);
-  printDemoSummary(existingGroup);
-} else {
-  const now = new Date().toISOString();
-  const group: Group = { id: randomUUID(), name: groupName, createdAt: now };
-  const members = new Map<string, Member>();
+  if (existingGroup) {
+    console.log(`A demo group named "${groupName}" already exists; skipping creation.`);
+    await printDemoSummary(existingGroup);
+  } else {
+    const now = new Date().toISOString();
+    const group: Group = { id: randomUUID(), name: groupName, createdAt: now };
+    const members = new Map<string, Member>();
 
-  const insertGroup = db.prepare('INSERT INTO "Group" (id, name, createdAt) VALUES (?, ?, ?)');
-  const insertMember = db.prepare('INSERT INTO "Member" (id, groupId, name, stripeAccountId) VALUES (?, ?, ?, ?)');
-  const insertExpense = db.prepare('INSERT INTO "Expense" (id, groupId, paidByMemberId, amount, description, createdAt) VALUES (?, ?, ?, ?, ?, ?)');
-  const insertSplit = db.prepare('INSERT INTO "ExpenseSplit" (id, expenseId, memberId) VALUES (?, ?, ?)');
+    await db.transaction(async () => {
+      await db.prepare('INSERT INTO "Group" (id, name, createdAt) VALUES (?, ?, ?)').run(group.id, group.name, group.createdAt);
 
-  db.transaction(() => {
-    insertGroup.run(group.id, group.name, group.createdAt);
-
-    for (const seed of memberSeeds) {
-      const member: Member = { id: randomUUID(), groupId: group.id, ...seed };
-      insertMember.run(member.id, member.groupId, member.name, member.stripeAccountId);
-      members.set(member.name, member);
-    }
-
-    for (const seed of expenseSeeds) {
-      const payer = members.get(seed.paidBy)!;
-      const expense: Expense = { id: randomUUID(), groupId: group.id, paidByMemberId: payer.id, amount: seed.amount, description: seed.description, createdAt: now };
-      insertExpense.run(expense.id, expense.groupId, expense.paidByMemberId, expense.amount, expense.description, expense.createdAt);
-
-      for (const memberName of seed.splitBetween) {
-        insertSplit.run(randomUUID(), expense.id, members.get(memberName)!.id);
+      for (const seed of memberSeeds) {
+        const member: Member = { id: randomUUID(), groupId: group.id, ...seed };
+        await db.prepare('INSERT INTO "Member" (id, groupId, name, stripeAccountId) VALUES (?, ?, ?, ?)').run(member.id, member.groupId, member.name, member.stripeAccountId);
+        members.set(member.name, member);
       }
-    }
-  })();
 
-  console.log(`Created demo group "${groupName}".`);
-  printDemoSummary(group);
+      for (const seed of expenseSeeds) {
+        const payer = members.get(seed.paidBy)!;
+        const expense: Expense = { id: randomUUID(), groupId: group.id, paidByMemberId: payer.id, amount: seed.amount, description: seed.description, createdAt: now };
+        await db.prepare('INSERT INTO "Expense" (id, groupId, paidByMemberId, amount, description, createdAt) VALUES (?, ?, ?, ?, ?, ?)').run(expense.id, expense.groupId, expense.paidByMemberId, expense.amount, expense.description, expense.createdAt);
+
+        for (const memberName of seed.splitBetween) {
+          await db.prepare('INSERT INTO "ExpenseSplit" (id, expenseId, memberId) VALUES (?, ?, ?)').run(randomUUID(), expense.id, members.get(memberName)!.id);
+        }
+      }
+    })();
+
+    console.log(`Created demo group "${groupName}".`);
+    await printDemoSummary(group);
+  }
 }
+
+main().catch(console.error);

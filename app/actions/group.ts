@@ -26,39 +26,35 @@ function requiredText(value: string, fieldName: string) {
   return trimmedValue;
 }
 
-function getMemberRemovalDetails(memberId: string): MemberRemovalDetails {
-  const member = db
+async function getMemberRemovalDetails(memberId: string): Promise<MemberRemovalDetails> {
+  const member = (await db
     .prepare('SELECT id, groupId, name, stripeAccountId FROM "Member" WHERE id = ?')
-    .get(memberId) as Member | undefined;
+    .get<Member>(memberId)) as Member | undefined;
 
   if (!member) {
     throw new Error("Traveler not found.");
   }
 
   const hasSettlement = Boolean(
-    db
+    await db
       .prepare(
         'SELECT id FROM "Settlement" WHERE groupId = ? AND (fromMemberId = ? OR toMemberId = ?) LIMIT 1',
       )
       .get(member.groupId, member.id, member.id),
   );
-  const removedExpenseCount = (
-    db.prepare('SELECT COUNT(*) AS count FROM "Expense" WHERE paidByMemberId = ?').get(member.id) as {
-      count: number;
-    }
-  ).count;
-  const removedExpenseSplitCount = (
-    db.prepare('SELECT COUNT(*) AS count FROM "ExpenseSplit" WHERE memberId = ?').get(member.id) as {
-      count: number;
-    }
-  ).count;
+  const removedExpenseCount = ((await db
+    .prepare('SELECT COUNT(*) AS count FROM "Expense" WHERE paidByMemberId = ?')
+    .get<{ count: number }>(member.id)) ?? { count: 0 }).count;
+  const removedExpenseSplitCount = ((await db
+    .prepare('SELECT COUNT(*) AS count FROM "ExpenseSplit" WHERE memberId = ?')
+    .get<{ count: number }>(member.id)) ?? { count: 0 }).count;
 
   return { member, hasSettlement, removedExpenseCount, removedExpenseSplitCount };
 }
 
 export async function createGroup(name: string): Promise<Group> {
   const group: Group = { id: randomUUID(), name: requiredText(name, "Group name"), createdAt: new Date().toISOString() };
-  db.prepare('INSERT INTO "Group" (id, name, createdAt) VALUES (?, ?, ?)').run(group.id, group.name, group.createdAt);
+  await db.prepare('INSERT INTO "Group" (id, name, createdAt) VALUES (?, ?, ?)').run(group.id, group.name, group.createdAt);
   return group;
 }
 
@@ -67,18 +63,18 @@ export async function addMember(groupId: string, name: string, stripeAccountId?:
   const normalizedName = requiredText(name, "Member name");
   const normalizedStripeAccountId = stripeAccountId?.trim() || null;
 
-  const duplicateName = db
+  const duplicateName = await db
     .prepare('SELECT name FROM "Member" WHERE groupId = ? AND LOWER(TRIM(name)) = LOWER(?)')
-    .get(normalizedGroupId, normalizedName) as { name: string } | undefined;
+    .get<{ name: string }>(normalizedGroupId, normalizedName);
 
   if (duplicateName) {
     throw new Error(`A traveler named ${duplicateName.name} already exists in this group.`);
   }
 
   if (normalizedStripeAccountId) {
-    const duplicateStripeAccount = db
+    const duplicateStripeAccount = await db
       .prepare('SELECT name FROM "Member" WHERE groupId = ? AND stripeAccountId = ?')
-      .get(normalizedGroupId, normalizedStripeAccountId) as { name: string } | undefined;
+      .get<{ name: string }>(normalizedGroupId, normalizedStripeAccountId);
 
     if (duplicateStripeAccount) {
       throw new Error(`This Stripe account is already used by ${duplicateStripeAccount.name} in this group.`);
@@ -86,12 +82,12 @@ export async function addMember(groupId: string, name: string, stripeAccountId?:
   }
 
   const member: Member = { id: randomUUID(), groupId: normalizedGroupId, name: normalizedName, stripeAccountId: normalizedStripeAccountId };
-  db.prepare('INSERT INTO "Member" (id, groupId, name, stripeAccountId) VALUES (?, ?, ?, ?)').run(member.id, member.groupId, member.name, member.stripeAccountId);
+  await db.prepare('INSERT INTO "Member" (id, groupId, name, stripeAccountId) VALUES (?, ?, ?, ?)').run(member.id, member.groupId, member.name, member.stripeAccountId);
   return member;
 }
 
 export async function getMemberRemovalPreview(memberId: string): Promise<MemberRemovalPreview> {
-  const details = getMemberRemovalDetails(memberId);
+  const details = await getMemberRemovalDetails(memberId);
 
   if (details.hasSettlement) {
     return {
@@ -118,19 +114,19 @@ export async function removeMember(memberId: string): Promise<{
   removedExpenseCount: number;
   removedExpenseSplitCount: number;
 }> {
-  const details = getMemberRemovalDetails(memberId);
+  const details = await getMemberRemovalDetails(memberId);
 
   if (details.hasSettlement) {
     throw new Error(`${details.member.name} can't be removed — they have a completed settlement on record.`);
   }
 
-  db.transaction(() => {
-    db.prepare('DELETE FROM "ExpenseSplit" WHERE memberId = ?').run(details.member.id);
-    db
+  await db.transaction(async () => {
+    await db.prepare('DELETE FROM "ExpenseSplit" WHERE memberId = ?').run(details.member.id);
+    await db
       .prepare('DELETE FROM "ExpenseSplit" WHERE expenseId IN (SELECT id FROM "Expense" WHERE paidByMemberId = ?)')
       .run(details.member.id);
-    db.prepare('DELETE FROM "Expense" WHERE paidByMemberId = ?').run(details.member.id);
-    db.prepare('DELETE FROM "Member" WHERE id = ?').run(details.member.id);
+    await db.prepare('DELETE FROM "Expense" WHERE paidByMemberId = ?').run(details.member.id);
+    await db.prepare('DELETE FROM "Member" WHERE id = ?').run(details.member.id);
   })();
 
   return {
@@ -141,8 +137,8 @@ export async function removeMember(memberId: string): Promise<{
 }
 
 export async function getGroup(groupId: string): Promise<GroupWithMembers | null> {
-  const group = db.prepare('SELECT id, name, createdAt FROM "Group" WHERE id = ?').get(groupId) as Group | undefined;
+  const group = await db.prepare('SELECT id, name, createdAt FROM "Group" WHERE id = ?').get<Group>(groupId);
   if (!group) return null;
-  const members = db.prepare('SELECT id, groupId, name, stripeAccountId FROM "Member" WHERE groupId = ? ORDER BY name').all(groupId) as Member[];
+  const members = await db.prepare('SELECT id, groupId, name, stripeAccountId FROM "Member" WHERE groupId = ? ORDER BY name').all<Member>(groupId);
   return { group, members };
 }

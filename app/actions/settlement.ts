@@ -19,7 +19,7 @@ export async function createSettlement(groupId: string, fromMemberId: string, to
   if (!Number.isFinite(amount) || amount <= 0) throw new Error("Settlement amount must be greater than zero.");
 
   const settlement: Settlement = { id: randomUUID(), groupId, fromMemberId, toMemberId, amount: Math.round(amount * 100) / 100, stripeTransferId: null, status: "pending", createdAt: new Date().toISOString() };
-  db.prepare('INSERT INTO "Settlement" (id, groupId, fromMemberId, toMemberId, amount, stripeTransferId, status, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(settlement.id, settlement.groupId, settlement.fromMemberId, settlement.toMemberId, settlement.amount, settlement.stripeTransferId, settlement.status, settlement.createdAt);
+  await db.prepare('INSERT INTO "Settlement" (id, groupId, fromMemberId, toMemberId, amount, stripeTransferId, status, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(settlement.id, settlement.groupId, settlement.fromMemberId, settlement.toMemberId, settlement.amount, settlement.stripeTransferId, settlement.status, settlement.createdAt);
   return settlement;
 }
 
@@ -32,9 +32,9 @@ export async function executeSettlement(
   try {
     assertStripeConfigured();
 
-    const recipient = db
+    const recipient = await db
       .prepare('SELECT stripeAccountId FROM "Member" WHERE id = ?')
-      .get(toMemberId) as { stripeAccountId: string | null } | undefined;
+      .get<{ stripeAccountId: string | null }>(toMemberId);
 
     if (!recipient?.stripeAccountId) {
       throw new Error("The receiving member does not have a Stripe account ID.");
@@ -48,7 +48,7 @@ export async function executeSettlement(
       metadata: { settlementId, fromMemberId, toMemberId },
     });
 
-    db.prepare('UPDATE "Settlement" SET status = ?, stripeTransferId = ? WHERE id = ?').run(
+    await db.prepare('UPDATE "Settlement" SET status = ?, stripeTransferId = ? WHERE id = ?').run(
       "complete",
       transfer.id,
       settlementId,
@@ -57,13 +57,13 @@ export async function executeSettlement(
     return { success: true, transferId: transfer.id };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Stripe transfer failed.";
-    db.prepare('UPDATE "Settlement" SET status = ? WHERE id = ?').run("failed", settlementId);
+    await db.prepare('UPDATE "Settlement" SET status = ? WHERE id = ?').run("failed", settlementId);
     return { success: false, error: message };
   }
 }
 
 export async function getSettlements(groupId: string): Promise<SettlementWithNames[]> {
-  return db.prepare(`
+  return await db.prepare(`
     SELECT s.id, s.groupId, s.fromMemberId, s.toMemberId, s.amount, s.stripeTransferId, s.status, s.createdAt,
            payer.name AS fromMemberName, payee.name AS toMemberName
     FROM "Settlement" s
@@ -71,5 +71,5 @@ export async function getSettlements(groupId: string): Promise<SettlementWithNam
     JOIN "Member" payee ON payee.id = s.toMemberId
     WHERE s.groupId = ?
     ORDER BY s.createdAt DESC
-  `).all(groupId) as SettlementWithNames[];
+  `).all<SettlementWithNames>(groupId);
 }
