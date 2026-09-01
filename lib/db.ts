@@ -2,7 +2,35 @@ import Database from "better-sqlite3";
 import fs from "node:fs";
 import path from "node:path";
 
-const databasePath = path.join(process.cwd(), "data", "app.db");
+import os from "node:os";
+
+function resolveDatabasePath(): string {
+  if (process.env.DATABASE_PATH) {
+    return process.env.DATABASE_PATH;
+  }
+
+  const defaultDir = path.join(process.cwd(), "data");
+  const defaultPath = path.join(defaultDir, "app.db");
+
+  try {
+    if (!fs.existsSync(defaultDir)) {
+      fs.mkdirSync(defaultDir, { recursive: true });
+    }
+    // Test write access to directory
+    const testFile = path.join(defaultDir, `.write-test-${Date.now()}`);
+    fs.writeFileSync(testFile, "");
+    fs.unlinkSync(testFile);
+    return defaultPath;
+  } catch {
+    const tmpDir = path.join(os.tmpdir(), "fair-split");
+    if (!fs.existsSync(tmpDir)) {
+      fs.mkdirSync(tmpDir, { recursive: true });
+    }
+    return path.join(tmpDir, "app.db");
+  }
+}
+
+const databasePath = resolveDatabasePath();
 
 declare global {
   // eslint-disable-next-line no-var
