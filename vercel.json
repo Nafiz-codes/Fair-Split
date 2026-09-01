@@ -1,0 +1,10 @@
+{
+  "functions": {
+    "app/**/*": {
+      "includeFiles": "node_modules/better-sqlite3/build/Release/**"
+    },
+    "api/**/*": {
+      "includeFiles": "node_modules/better-sqlite3/build/Release/**"
+    }
+  }
+}
